@@ -1,0 +1,659 @@
+오류 내용이 비어 있어 정확한 원인은 판단할 수 없지만, WebGPU 미지원·GPU 어댑터 없음·모델 로딩 실패를 화면에 표시하도록 처리했습니다.
+
+Sites 스킬의 로컬 작업 지침을 참고했습니다. 아래 코드를 **`index.html`로 저장한 뒤 최신 크롬에서 열면 됩니다.** 이름과 시스템 프롬프트는 예시로 채웠고, 추가 기능은 **대화 지우기**입니다.
+
+처음에는 인터넷으로 라이브러리와 모델을 내려받으며, AI 답변 생성은 브라우저에서 실행합니다. API 키나 별도 서버 설치는 필요 없습니다. 실제 GPU에서의 모델 실행은 여기서 검증하지 못했습니다.
+
+```html
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>진로봇 · 나만의 AI 친구</title>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    :root {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont,
+        "Segoe UI", sans-serif;
+      color: #233b50;
+      background: #eef7ff;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100dvh;
+      padding: 24px;
+      background:
+        radial-gradient(circle at 10% 10%, #fff 0, transparent 40%),
+        linear-gradient(135deg, #edf8ff, #edf0ff);
+    }
+
+    button,
+    textarea {
+      font: inherit;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.5;
+    }
+
+    button:focus-visible,
+    textarea:focus-visible {
+      outline: 3px solid #509bda;
+      outline-offset: 3px;
+    }
+
+    .app {
+      width: min(860px, 100%);
+      height: min(900px, calc(100dvh - 48px));
+      min-height: 480px;
+      margin: auto;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      background: #ffffffee;
+      border: 1px solid #fff;
+      border-radius: 28px;
+      box-shadow: 0 20px 70px #41648418;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 22px;
+      border-bottom: 1px solid #e5edf5;
+    }
+
+    .avatar {
+      display: grid;
+      place-items: center;
+      flex-shrink: 0;
+      width: 52px;
+      height: 52px;
+      border-radius: 19px;
+      background: #def1ff;
+      font-size: 28px;
+    }
+
+    .heading {
+      flex: 1;
+    }
+
+    h1 {
+      margin: 0 0 4px;
+      font-size: 22px;
+    }
+
+    .subtitle {
+      margin: 0;
+      color: #61798e;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .clear {
+      padding: 9px 12px;
+      border: 1px solid #dae7f2;
+      border-radius: 12px;
+      color: #526d83;
+      background: white;
+      font-size: 13px;
+    }
+
+    .status-panel {
+      margin: 16px 20px 0;
+      padding: 14px 16px;
+      border-radius: 16px;
+      background: #eff7ff;
+    }
+
+    #status {
+      margin: 0;
+      font-size: 14px;
+      font-weight: 650;
+      line-height: 1.5;
+    }
+
+    #progressText {
+      margin: 6px 0 0;
+      color: #5f778b;
+      font-size: 12px;
+      line-height: 1.6;
+      overflow-wrap: anywhere;
+      white-space: pre-wrap;
+    }
+
+    progress {
+      width: 100%;
+      height: 9px;
+      margin-top: 10px;
+      accent-color: #5eaaeb;
+    }
+
+    .status-panel.error {
+      background: #fff0f0;
+      color: #9b3434;
+    }
+
+    #chat {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      padding: 24px 20px;
+      scrollbar-width: thin;
+    }
+
+    .message {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      margin-bottom: 20px;
+    }
+
+    .message.user {
+      align-items: flex-end;
+    }
+
+    .sender {
+      margin: 0 8px 6px;
+      color: #72869a;
+      font-size: 12px;
+    }
+
+    .bubble {
+      max-width: 88%;
+      padding: 14px 17px;
+      border-radius: 20px 20px 20px 6px;
+      background: #f0f5fa;
+      font-size: 15px;
+      line-height: 1.8;
+      overflow-wrap: anywhere;
+      white-space: pre-wrap;
+    }
+
+    .user .bubble {
+      border-radius: 20px 20px 6px 20px;
+      background: #dcedff;
+    }
+
+    .message.failed .bubble {
+      border: 1px solid #edbbbb;
+    }
+
+    footer {
+      padding: 16px 20px 18px;
+      border-top: 1px solid #e5edf5;
+      background: white;
+    }
+
+    form {
+      display: flex;
+      gap: 10px;
+      align-items: flex-end;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 52px;
+      max-height: 150px;
+      resize: vertical;
+      padding: 14px;
+      border: 1px solid #d5e4f0;
+      border-radius: 16px;
+      background: #f8fbff;
+      color: #233b50;
+      line-height: 1.5;
+    }
+
+    #send {
+      flex-shrink: 0;
+      min-height: 52px;
+      padding: 0 20px;
+      border: 0;
+      border-radius: 16px;
+      background: #327db9;
+      color: white;
+      font-weight: 700;
+    }
+
+    .hint {
+      margin: 9px 2px 0;
+      color: #72869a;
+      font-size: 11px;
+      line-height: 1.6;
+    }
+
+    @media (max-width: 560px) {
+      body {
+        padding: 0;
+      }
+
+      .app {
+        height: 100dvh;
+        min-height: 0;
+        border: 0;
+        border-radius: 0;
+      }
+
+      header {
+        padding: 16px;
+        gap: 10px;
+      }
+
+      h1 {
+        font-size: 20px;
+      }
+
+      .clear {
+        padding: 8px;
+        font-size: 12px;
+      }
+
+      #chat {
+        padding: 20px 14px;
+      }
+
+      .bubble {
+        max-width: 94%;
+      }
+
+      footer {
+        padding: 12px 14px;
+      }
+
+      #send {
+        padding: 0 15px;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <main class="app">
+    <header>
+      <div class="avatar" aria-hidden="true">☁️</div>
+
+      <div class="heading">
+        <h1 id="appName">진로봇</h1>
+        <p class="subtitle">내 브라우저에서 만나는 작은 진로 상담실</p>
+      </div>
+
+      <button class="clear" id="clear" type="button" disabled>
+        대화 지우기
+      </button>
+    </header>
+
+    <section class="status-panel" id="statusPanel"
+      aria-label="AI 준비 상태">
+      <p id="status" role="status" aria-live="polite">
+        AI 준비를 시작하고 있어요…
+      </p>
+      <progress id="progress" max="100" value="0"
+        aria-label="모델 다운로드 및 초기화 진행률"></progress>
+      <p id="progressText">0% · WebLLM 라이브러리를 불러오는 중</p>
+    </section>
+
+    <section id="chat" role="log" aria-label="대화 기록"
+      aria-live="off" aria-busy="false"></section>
+
+    <footer>
+      <form id="form">
+        <textarea
+          id="input"
+          rows="2"
+          maxlength="4000"
+          aria-label="AI에게 보낼 메시지"
+          placeholder="AI가 준비되면 이야기를 들려주세요."
+          disabled
+        ></textarea>
+        <button id="send" type="submit" disabled>보내기</button>
+      </form>
+
+      <p class="hint">
+        Enter로 전송 · Shift+Enter로 줄바꿈<br>
+        대화는 이 브라우저에 저장됩니다. AI 답변에는 오류가 있을 수 있어요.
+      </p>
+    </footer>
+  </main>
+
+  <!-- 모듈을 불러오기 전에도 WebGPU 미지원 안내를 표시합니다. -->
+  <script>
+    (() => {
+      const status = document.getElementById("status");
+      const panel = document.getElementById("statusPanel");
+      const text = document.getElementById("progressText");
+
+      if (!navigator.gpu) {
+        status.textContent = "WebGPU를 지원하지 않아요";
+        text.textContent =
+          "WebGPU를 지원하는 최신 크롬과 기기에서 다시 열어주세요.";
+        panel.classList.add("error");
+      }
+
+      window.addEventListener("error", (event) => {
+        const moduleFailed =
+          event.target instanceof HTMLScriptElement &&
+          event.target.type === "module";
+
+        if (moduleFailed && navigator.gpu) {
+          status.textContent = "WebLLM을 불러오지 못했어요";
+          text.textContent =
+            "인터넷 연결과 브라우저 콘솔을 확인한 뒤 새로고침해 주세요.";
+          panel.classList.add("error");
+        }
+      }, true);
+    })();
+  </script>
+
+  <script type="module">
+    import { CreateMLCEngine } from "https://esm.run/@mlc-ai/web-llm@0.2.87";
+
+    // 아래 두 항목을 원하는 이름과 시스템 프롬프트로 바꾸세요.
+    const AI_NAME = "진로봇";
+
+    const SYSTEM_PROMPT = `
+너는 고등학생의 진로 탐색을 도와주는 친절한 AI '진로봇'이야.
+항상 자연스러운 한국어로 대답해.
+학생의 관심사, 좋아하는 활동, 강점을 먼저 이해하려고 노력해.
+어려운 용어는 쉽게 설명하고, 실천할 수 있는 작은 행동을 제안해.
+진로를 단정하지 말고 여러 선택지를 함께 탐색해.
+추가 정보가 필요하면 한 번에 한두 가지 질문만 해.
+모르는 정보는 모른다고 말하고, 확인되지 않은 사실을 만들지 마.
+답변은 읽기 편하게 적당한 길이로 작성해.
+    `.trim();
+
+    const STORAGE_KEY = "jinrobot.webllm.history.v1";
+
+    const chat = document.getElementById("chat");
+    const input = document.getElementById("input");
+    const form = document.getElementById("form");
+    const sendButton = document.getElementById("send");
+    const clearButton = document.getElementById("clear");
+    const status = document.getElementById("status");
+    const statusPanel = document.getElementById("statusPanel");
+    const progress = document.getElementById("progress");
+    const progressText = document.getElementById("progressText");
+
+    let engine = null;
+    let history = [];
+    let busy = false;
+    let storageWarning = "";
+
+    document.title = `${AI_NAME} · 나만의 AI 친구`;
+    document.getElementById("appName").textContent = AI_NAME;
+
+    function scrollToBottom() {
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    function addMessage(role, content) {
+      const row = document.createElement("div");
+      row.className = `message ${role}`;
+
+      const sender = document.createElement("div");
+      sender.className = "sender";
+      sender.textContent = role === "user" ? "나" : AI_NAME;
+
+      const bubble = document.createElement("div");
+      bubble.className = "bubble";
+
+      // 사용자 입력과 AI 답변을 HTML로 해석하지 않고 텍스트로 표시합니다.
+      bubble.textContent = content;
+
+      row.append(sender, bubble);
+      chat.append(row);
+      scrollToBottom();
+
+      return { row, bubble };
+    }
+
+    function showWelcome() {
+      addMessage(
+        "assistant",
+        `안녕! 나는 ${AI_NAME}이야 ☁️\n` +
+        "좋아하는 과목이나 요즘 관심 있는 일이 있어? 함께 진로를 찾아보자!"
+      );
+    }
+
+    function showError(title, error) {
+      statusPanel.classList.add("error");
+      status.textContent = title;
+      progressText.textContent =
+        error instanceof Error ? error.message : String(error);
+    }
+
+    function updateControls() {
+      const ready = Boolean(engine) && !busy;
+      input.disabled = !ready;
+      sendButton.disabled = !ready;
+      clearButton.disabled = busy || history.length === 0;
+      chat.setAttribute("aria-busy", String(busy));
+    }
+
+    function saveHistory() {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+        storageWarning = "";
+      } catch {
+        storageWarning =
+          "브라우저 저장소를 사용할 수 없어 대화는 현재 탭에서만 기억해요.";
+      }
+    }
+
+    function restoreHistory() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        const parsed = raw ? JSON.parse(raw) : [];
+
+        const valid =
+          Array.isArray(parsed) &&
+          parsed.length % 2 === 0 &&
+          parsed.every((message, index) =>
+            message !== null &&
+            typeof message === "object" &&
+            message.role === (index % 2 === 0 ? "user" : "assistant") &&
+            typeof message.content === "string"
+          );
+
+        history = valid ? parsed : [];
+      } catch {
+        history = [];
+        storageWarning =
+          "저장된 대화를 읽지 못했어요. 현재 탭에서는 대화할 수 있어요.";
+      }
+
+      if (history.length === 0) {
+        showWelcome();
+      } else {
+        for (const message of history) {
+          addMessage(message.role, message.content);
+        }
+      }
+
+      updateControls();
+    }
+
+    clearButton.addEventListener("click", () => {
+      if (busy) return;
+
+      history = [];
+      chat.replaceChildren();
+      showWelcome();
+
+      try {
+        localStorage.removeItem(STORAGE_KEY);
+        storageWarning = "";
+      } catch {
+        storageWarning =
+          "저장소 접근이 차단되어 저장된 기록 삭제를 확인하지 못했어요.";
+      }
+
+      progressText.textContent =
+        storageWarning || "대화를 지웠어요. 새로운 이야기를 시작해 보세요.";
+      updateControls();
+    });
+
+    input.addEventListener("keydown", (event) => {
+      if (
+        event.key === "Enter" &&
+        !event.shiftKey &&
+        !event.isComposing
+      ) {
+        event.preventDefault();
+        form.requestSubmit();
+      }
+    });
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+
+      const content = input.value.trim();
+      if (!engine || busy || !content) return;
+
+      busy = true;
+      updateControls();
+      statusPanel.classList.remove("error");
+      status.textContent = "답변을 쓰고 있어요…";
+      progressText.textContent = "이전 대화를 참고해 브라우저에서 생성 중";
+
+      input.value = "";
+      addMessage("user", content);
+
+      // 실패한 요청은 대화 기록에 남기지 않도록 원래 길이를 기억합니다.
+      const previousLength = history.length;
+      history.push({ role: "user", content });
+
+      const { row, bubble } = addMessage("assistant", "");
+      bubble.textContent = "생각을 정리하고 있어요…";
+
+      let answer = "";
+
+      try {
+        const stream = await engine.chat.completions.create({
+          messages: [{ role: "system", content: SYSTEM_PROMPT }, ...history],
+          stream: true,
+          extra_body: { enable_thinking: false },
+        });
+
+        for await (const chunk of stream) {
+          const piece = chunk.choices[0]?.delta?.content || "";
+
+          // 모델이 여러 글자를 한꺼번에 보내도 화면에는 한 글자씩 표시합니다.
+          for (const character of piece) {
+            if (answer.length === 0) {
+              bubble.textContent = "";
+            }
+
+            answer += character;
+            bubble.append(document.createTextNode(character));
+            scrollToBottom();
+
+            await new Promise((resolve) => setTimeout(resolve, 8));
+          }
+        }
+
+        if (!answer.trim()) {
+          throw new Error("빈 답변이 도착했어요. 질문을 다시 보내주세요.");
+        }
+
+        history.push({ role: "assistant", content: answer });
+        saveHistory();
+
+        status.textContent = "이야기할 준비가 됐어요";
+        progressText.textContent =
+          storageWarning || "대화를 기억하고 있어요. 이어서 질문해 보세요.";
+      } catch (error) {
+        history.length = previousLength;
+        row.classList.add("failed");
+
+        bubble.textContent = answer
+          ? answer + "\n\n[답변이 중단되어 이번 질문과 답변은 저장하지 않았어요.]"
+          : "답변을 만들지 못했어요. 질문을 다시 보내주세요.";
+
+        // 다시 보낼 수 있도록 질문을 입력창에 복원합니다.
+        input.value = content;
+
+        showError(
+          "답변 생성 중 오류가 발생했어요",
+          error
+        );
+      } finally {
+        busy = false;
+        updateControls();
+        input.focus();
+        scrollToBottom();
+      }
+    });
+
+    restoreHistory();
+
+    async function initialize() {
+      if (!navigator.gpu) {
+        showError(
+          "WebGPU를 지원하지 않아요",
+          "WebGPU를 지원하는 최신 크롬과 기기에서 다시 열어주세요."
+        );
+        return;
+      }
+
+      try {
+        status.textContent = "GPU를 확인하고 있어요…";
+
+        const adapter = await navigator.gpu.requestAdapter();
+
+        if (!adapter) {
+          throw new Error(
+            "사용 가능한 GPU 어댑터가 없어요. " +
+            "크롬의 그래픽 가속 설정과 GPU 드라이버를 확인해 주세요."
+          );
+        }
+
+        const q = adapter.features.has("shader-f16") ? "q4f16_1" : "q4f32_1";
+        engine = await CreateMLCEngine(`Qwen3.5-2B-${q}-MLC`, {
+          initProgressCallback: (p) => {
+            const fraction = Number.isFinite(p.progress)
+              ? Math.max(0, Math.min(1, p.progress))
+              : 0;
+
+            const percent = Math.round(fraction * 100);
+
+            progress.value = percent;
+            status.textContent = `AI를 준비하고 있어요 · ${percent}%`;
+            progressText.textContent = `${percent}% · ${p.text ?? ""}`;
+          },
+        });
+
+        progress.value = 100;
+        statusPanel.classList.remove("error");
+        status.textContent = "이야기할 준비가 됐어요";
+        progressText.textContent =
+          storageWarning ||
+          "100% · 모델 준비 완료! AI 답변은 브라우저에서 생성돼요.";
+
+        input.placeholder = "궁금한 점이나 고민을 들려주세요.";
+        updateControls();
+        input.focus();
+      } catch (error) {
+        engine = null;
+        showError("AI를 준비하지 못했어요", error);
+        updateControls();
+      }
+    }
+
+    await initialize();
+  </script>
+</body>
+</html>
+```
